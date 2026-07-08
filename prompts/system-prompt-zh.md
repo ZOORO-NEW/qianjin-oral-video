@@ -114,3 +114,4 @@
 - `references/visual-direction.md` — 视觉指令参考
 - `references/transformation-rules.md` — 长文→口播转化规则
 - `references/quality-checklist.md` — 质量自检表
+- `references/video-generation.md` — 视频生成指南（Manim白板动画+edge-tts配音+字幕合成）

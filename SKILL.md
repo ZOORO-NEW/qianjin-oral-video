@@ -111,6 +111,7 @@ disable: true
 | `references/visual-direction.md` | 视觉指令参考（镜头/B-roll/字幕/音效/道具） | 编写视觉指令时 |
 | `references/quality-checklist.md` | 脚本质量自检表 | 自检时 |
 | `references/transformation-rules.md` | 长文→口播转化规则（句式/结构/语气/密度） | 转化文案时 |
+| `references/video-generation.md` | 视频生成完整指南（Manim白板动画+edge-tts配音+FFmpeg合成） | 需要生成视频时 |
 
 ## 语言风格
 
@@ -126,7 +127,84 @@ disable: true
 
 完整脚本输出为Markdown格式，包含以上所有板块。同时输出一份**质量自检报告**，附在脚本末尾。
 
-## 与qianjin技能体系的联动
+## 视频生成（第5步 - 可选）
+
+本技能支持将口播脚本直接生成 **带配音的简笔风白板动画视频**（Manim引擎）。
+
+### 触发条件
+
+当用户表达以下意图时，激活视频生成模块：
+- 把脚本/这个做成视频/生成视频
+- 帮我配音/加画面/做个口播视频
+- 生成MP4/视频文件
+- 给脚本配画面/简笔画视频/白板动画
+
+### 工作流程
+
+```
+口播脚本. md → [1] 脚本解析器提取分段
+              → [2] TTS配音 (edge-tts) → 每段MP3 + 词级时间戳
+              → [3] Manim白板动画 → 每段简笔风MP4
+              → [4] 字幕生成器 → SRT字幕轨道
+              → [5] FFmpeg合成 → 最终MP4
+```
+
+### 运行命令
+
+```bash
+# 基本用法（默认抖音竖版）
+python scripts/generate_video.py \
+  --script outputs/口播脚本.md \
+  --output outputs/口播视频.mp4
+
+# 指定平台
+python scripts/generate_video.py \
+  --script 口播脚本.md \
+  --output 口播视频.mp4 \
+  --platform bilibili
+
+# 限制段数测试
+python scripts/generate_video.py \
+  --script 口播脚本.md \
+  --output test.mp4 \
+  --max-segments 2 --quality l
+```
+
+### 场景类型（从视觉指令自动推断）
+
+| 视觉指令关键词 | 白板场景 | 动画效果 |
+|-------------|---------|---------|
+| 开场/Hook/标题 | TitleScene | 大字标题+强调下划线 |
+| 字幕弹出/要点/核心观点 | TextRevealScene | 关键词手写浮现 |
+| 数据图表/柱状/对比 | DataBarScene | 动态柱状图 |
+| 流程图/思维导图/组合 | FlowScene | 框+箭头逐步展开 |
+| 图标/网格/平台列表 | IconGridScene | 图标逐个点亮 |
+| 金句/收尾/核心句 | QuoteScene | 引号+高亮框强调 |
+
+### 参数说明
+
+| 参数 | 说明 | 默认 |
+|------|------|------|
+| `--script` | 口播脚本Markdown路径 | 必填 |
+| `--output` | 输出MP4路径 | 必填 |
+| `--platform` | 目标平台(douyin/channels/bilibili/xiaohongshu) | douyin |
+| `--voice` | TTS声音 | 按平台自动选择 |
+| `--quality` | 渲染质量(l/m/h/k) | l |
+| `--max-segments` | 限制处理段数(测试用) | 全部 |
+| `--workdir` | 工作目录(默认输出同目录) | 自动 |
+
+### 质量指标
+
+| 指标 | 标准 |
+|------|------|
+| 音画同步 | 字幕与配音误差<200ms |
+| 配音自然 | edge-tts中文自然语音 |
+| 白板统一 | 全片马克笔调色板一致 |
+| 字幕可读 | 白字+黑边，底部居中 |
+| 风格匹配 | 简笔风适配口播内容类型 |
+
+关键参考文件：
+| `references/video-generation.md` | 视频生成完整指南 | 需要生成视频时 |
 
 本技能可与以下前进体系技能联动使用：
 - **qianjin-writer**：先用写作引擎写好文章，再用本技能转口播
