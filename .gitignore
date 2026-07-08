@@ -1,0 +1,11 @@
+# WorkBuddy auto-generated files
+_files.json
+_read_files.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
