@@ -1,4 +1,9 @@
 ---
+version: 1.0.0
+slug: qianjin-oral-video
+displayName: 口播视频脚本生成
+summary: "将长文案自动转化为口播视频脚本，并可一键生成完整口播视频。输入一篇长文（公众号文章、演讲稿、报告、笔记等），输出完整的口播视频脚本（开场Hook、分镜脚本、视觉指令、情绪标记、字幕要点、时长估算、标题封面文案、平台适配），并通过"
+license: MIT
 name: qianjin-oral-video
 category: 内容创作
 platforms: [workbuddy, claude-code, cursor, windsurf, codex]
