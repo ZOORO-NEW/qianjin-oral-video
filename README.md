@@ -160,6 +160,10 @@ python scripts/handwhite_render.py \
   --rows 4 --pass-time 0.72 --scale 0.27
 ```
 
+> 📦 演示素材（握笔手 + 6 张白描线稿）在 GitHub 仓库 `assets/handwhite/`。
+> SkillHub 的发布包只收代码与文本、不收图片，从 SkillHub 安装后需到 GitHub 取素材，
+> 或用 `--figs` / `--hand` 指向自己的线稿与手素材。
+
 | 素材 | 规格 | 关键点 |
 |------|------|--------|
 | 线稿 PNG | 已抠底的墨线图（白描最佳） | 纸色用**中位数**估，别用 95 分位（会糊一层灰底） |

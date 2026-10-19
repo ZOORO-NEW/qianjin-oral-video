@@ -1,5 +1,5 @@
 ---
-version: 1.1.0
+version: 1.1.1
 slug: qianjin-oral-video
 displayName: 口播视频脚本生成
 summary: "把长文案一键变成口播视频：出脚本、配音、词级字幕对齐，再用真·白板手绘或国风宣纸场景渲染成片。"
@@ -233,6 +233,9 @@ python scripts/handwhite_render.py
 python scripts/handwhite_render.py --scenes my.json --figs ./lineart --hand ./hand.png \
     --out ./output --rows 4 --pass-time 0.72 --scale 0.27
 ```
+
+> 演示素材在 GitHub 仓库 `assets/handwhite/`；SkillHub 发布包不收图片文件，
+> 从 SkillHub 安装后需到仓库取素材，或用 `--figs`/`--hand` 指定自己的素材。
 
 | 素材 | 规格 | 备注 |
 |---|---|---|

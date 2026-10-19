@@ -418,6 +418,17 @@ def main():
     _HAND = None
 
     os.makedirs(OUT, exist_ok=True)
+
+    # 素材不全时给明确指引，别抛一个 FileNotFoundError 让人猜
+    if not os.path.isdir(FIG) or not os.path.exists(HAND):
+        raise SystemExit(
+            "素材未就绪：\n"
+            f"  线稿目录 {FIG}\n"
+            f"  手素材   {HAND}\n"
+            "演示素材在 GitHub 仓库 assets/handwhite/（SkillHub 包不收图片文件），\n"
+            "也可用 --figs / --hand 指向自己的素材。\n"
+            "素材规格见 SKILL.md「真·白板手绘」一节。")
+
     with open(a.scenes, encoding="utf-8") as f:
         plan = json.load(f)
     for i, sc in enumerate(plan, 1):
