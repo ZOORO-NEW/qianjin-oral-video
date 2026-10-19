@@ -5,7 +5,10 @@
 ## ✨ 核心功能
 
 - 🎬 **长文→口播脚本**：输入一篇长文，输出完整口播视频脚本（开场Hook + 分镜脚本 + 视觉指令 + 字幕要点 + 情绪标记）
-- 🤖 **脚本→自动出片**：将口播脚本直接渲染为 MP4 视频——含 AI 配音、Manim 白板动画、人物肖像/场景插图、硬字幕，一键出片
+- 🤖 **脚本→自动出片**：将口播脚本直接渲染为 MP4 视频——含 AI 配音、白板动画、人物肖像/场景插图、硬字幕，一键出片
+- ✍️ **真·白板手绘**：一只手握笔入镜、笔尖驱动线条生长，线稿真的被"描"出来（不是元素淡入）
+- 🏮 **国风宣纸手绘**：宣纸底 + 毛笔笔锋 + 朱印，配逐笔生长的人物白描线稿，适配国学/历史/非遗题材
+- 🔤 **词级字幕对齐**：用 edge-tts WordBoundary 时间戳把字幕切在标点处，字幕永远和旁白同步
 - 📱 **4平台适配**：抖音口播、视频号、B站知识区、小红书视频——不同平台不同节奏、语气、时长
 - 🎯 **3秒Hook公式**：6大Hook类型（反常识/数据冲击/身份认同/悬念/对比/痛点直击）+组合技巧
 - 🎥 **视觉指令系统**：镜头/B-roll/字幕/音效/道具/背景——脚本不只是文字，是视听蓝图
@@ -97,6 +100,21 @@ python scripts/generate_video.py \
 
 > ⚡ 快速试听：`--voice zh-CN-XiaoxiaoNeural` 是人物科普最优选（清澈、咬字清晰、语气自然）
 
+#### 🔤 字幕：词级对齐（`srt_aligner.py`）
+
+旧版每段只挂一条「字幕要点」摘要、撑满整段时长——一段 20 秒旁白只显示一句，
+声音在讲十几句，观众读到的和听到的对不上，越往后错得越多。
+
+现在用 edge-tts 返回的 **WordBoundary 词级时间戳**做锚点：
+
+1. 词流反查原文，回填字符位置（edge-tts 不返回标点，需还原）
+2. 按「标点优先 → 词边界次之」切条，单条 ≤16 字 / ≤4.2 秒 / ≥0.85 秒，不切词、不留孤字
+3. 每条起止 = 首词 `offset` → 末词 `offset+duration`，误差在单字级；句间静音不显示字幕
+4. 字幕文本用旁白原文，不是摘要
+
+烧制走 **ASS**（`PlayResX/Y` 写死、手动 `\N` 折行），不要用 SRT + `force_style`——
+无 PlayRes 时 libass 会按 384×288 放大数倍顶出画面，中文长句也不会自动换行。
+
 #### 📐 画面比例
 
 通过 `--platform` 一键切换，或手动指定分辨率：
@@ -123,6 +141,45 @@ python scripts/generate_video.py \
 | **IllustrationScene** 🖼️ | 全屏场景插图 + 底部半透明文字浮层 | 传入 `--illustrations` 时自动嵌入 |
 
 场景类型由脚本中的视觉指令自动推断，无需手动指定。同时传入肖像和插图时，插图优先于肖像。
+
+#### ✍️ 真·白板手绘（`handwhite_render.py`）
+
+Manim 版是「元素逐个出场」——没有手、没有落笔动作，观众一眼就能看出不是白板动画。
+要真有一只手在画，走 PIL 逐帧渲染：
+
+```bash
+# 用自带演示素材直接跑（5 幕，输出 output/hw/s01..s05.mp4）
+python scripts/handwhite_render.py
+
+# 换自己的线稿与手素材
+python scripts/handwhite_render.py \
+  --scenes my_scenes.json \
+  --figs ./lineart/ready \
+  --hand ./hand/hand.png \
+  --out ./output \
+  --rows 4 --pass-time 0.72 --scale 0.27
+```
+
+| 素材 | 规格 | 关键点 |
+|------|------|--------|
+| 线稿 PNG | 已抠底的墨线图（白描最佳） | 纸色用**中位数**估，别用 95 分位（会糊一层灰底） |
+| 手 PNG | 握笔手，记录笔尖像素坐标 | 生成时用**纯绿幕**再 chroma key；`transparent` 参数不生效 |
+| scenes JSON | 每幕 `figure` + 文字 steps | `at` 必须对齐旁白句级时间 |
+
+节奏四条硬规则（这是这类片子最容易废掉的地方）：
+
+1. **落笔趟数 ≤ 5（默认 4）**——趟数就是手来回换向的次数，24 趟/3.2 秒 = 7.5 次/秒会被读成抖动
+2. **笔带软边**——揭示用连续路径参数 `s∈[0,1]`（蛇形递增），而非行号
+3. **换带滑移**——每趟末 20% 时间前沿停住，手的 y 用 smoothstep 滑到下一带中线
+4. **留淡底稿 GHOST≈0.08**——纯 0/1 揭示会把线稿切成互不相连的碎片
+
+层级：纸 → 线稿 → 手 → 文字（文字压手上，手扫过标题也不吃字）。
+版面三分（720×1280）：图区 55–795 / 场景文字 810–1000 / **烧录字幕 1030–1146 不可侵占**。
+
+#### 🏮 国风手绘场景（`manim_scenes_guofeng.py`）
+
+宣纸底 + 分段笔锋 + 朱印，同一套管线只换美术层，适合文化解说、国学、历史题材。
+元素由 `steps` 数组的绝对时间点驱动，与旁白逐句同步。
 
 #### 🖼️ 人物肖像与场景插图
 
@@ -272,14 +329,18 @@ qianjin-oral-video/
 ├── PLATFORMS.md                      # 跨平台部署指南
 ├── README.md                         # 项目说明
 ├── assets/                           # 示例素材
+│   └── handwhite/                    # 白板手绘演示素材（手 + 6 张白描线稿 + 场景 JSON）
 ├── prompts/
 │   ├── system-prompt-zh.md           # 中文System Prompt
 │   └── system-prompt-en.md           # 英文System Prompt
 ├── scripts/                          # 视频生成管线
 │   ├── generate_video.py             # 主管道（解析→TTS→Manim→合成→字幕）
 │   ├── manim_scenes.py               # 8种白板场景模板
+│   ├── manim_scenes_guofeng.py       # 国风宣纸场景（steps 时间轴驱动）
+│   ├── handwhite_render.py           # 真·白板手绘（PIL 逐帧，手+笔尖驱动）
+│   ├── srt_aligner.py                # 词级字幕对齐 → ASS 生成
 │   ├── tts_generator.py              # edge-tts 配音生成
-│   └── subtitle_generator.py         # SRT字幕生成
+│   └── subtitle_generator.py         # SRT字幕生成（兼容入口，内部转交 srt_aligner）
 └── references/
     ├── platform-specs.md             # 4平台详细规格
     ├── script-structure.md           # 脚本结构模板+完整示例

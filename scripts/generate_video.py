@@ -255,9 +255,15 @@ def build_scene_params(seg, portrait_image=None, illustration_map=None):
     subtitle = seg.get("subtitle", "")
     seg_id = seg.get("id", 0)
 
-    # 中文口播约4.5字/秒 → 估算配音时长, Manim直接渲染够长时间
-    estimated_audio_dur = len(text) / 4.5
-    duration = max(script_dur, int(estimated_audio_dur) + 1)
+    # 场景时长由配音决定：TTS 此刻已跑完，直接用实测音频时长。
+    # 旧逻辑用 len(text)/4.5 估算，语速慢于 4.5 字/秒时估算偏短，
+    # 合成时 -shortest 会把配音尾部整段切掉（"配音不完整"的根因）。
+    measured = seg.get("audio_dur")
+    if measured and measured > 1:
+        duration = float(measured) + 0.4   # 略长于音频，-shortest 截到音频全长而不切音
+    else:
+        estimated_audio_dur = len(text) / 4.5
+        duration = max(script_dur, int(estimated_audio_dur) + 1)
 
     # 优先使用场景插图（需要传入 illustration_map）
     illustration_img = None
@@ -430,6 +436,30 @@ def _get_media_duration(path):
         return None
 
 
+def _read_timestamps(path):
+    """读取 TTS 产出的词级时间戳；缺失时返回空列表（触发兜底策略）。"""
+    if not path or not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _probe_size(path):
+    """读取视频宽高，用于字幕字号自适应。"""
+    cmd = [FFPROBE_EXE, "-v", "quiet", "-select_streams", "v:0",
+           "-show_entries", "stream=width,height", "-of", "csv=p=0", path]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    try:
+        parts = r.stdout.strip().split(",")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return 1920, 1080
+
+
 def pad_video_to_audio(video_path, audio_path, out_path, fps=30):
     """合成音视频，截短到较短的一方。
     
@@ -483,9 +513,30 @@ def concat_segments(segment_videos, out_path):
     return out_path
 
 
-def mux_subtitles(video_path, srt_path, out_path):
-    """叠加硬字幕。"""
-    style = "FontSize=28,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,Alignment=2,MarginV=40"
+def mux_subtitles(video_path, srt_path, out_path, font_name=None):
+    """叠加硬字幕，字号与安全区按竖屏/横屏自适应。
+
+    旧版固定 FontSize=28、MarginV=40 是按 1080p 横屏估的：
+    在抖音竖屏 1080x1920 上字太小，且贴底会被平台底部交互区遮挡。
+    """
+    w, h = _probe_size(video_path)
+    portrait = h > w
+    if portrait:
+        font = max(40, int(h * 0.0295))        # 1920 → 56
+        margin_v = int(h * 0.135)              # 1920 → 259，让开底部 UI
+        margin_h = int(w * 0.07)               # 1080 → 75
+    else:
+        font = max(24, int(h * 0.032))         # 1080 → 34
+        margin_v = int(h * 0.055)
+        margin_h = int(w * 0.05)
+
+    if font_name is None:
+        font_name = "Microsoft YaHei" if os.name == "nt" else "Noto Sans CJK SC"
+
+    style = (f"FontName={font_name},FontSize={font},"
+             f"PrimaryColour=&HFFFFFF,OutlineColour=&H000000,"
+             f"Outline=3,Shadow=1,Alignment=2,"
+             f"MarginV={margin_v},MarginL={margin_h},MarginR={margin_h}")
     # 复制字幕到输出目录同目录，用简单文件名避免 Windows 路径转义问题
     srt_tmp = os.path.join(os.path.dirname(os.path.abspath(out_path)), "subtitles_tmp.srt")
     shutil.copy(srt_path, srt_tmp)
@@ -579,6 +630,8 @@ def main():
         if audio_dur is None or audio_dur < 1:
             # fallback: 脚本时长
             audio_dur = seg["end_sec"] - seg["start_sec"]
+        seg["audio_dur"] = float(audio_dur)
+        seg["ts_path"] = os.path.join(audio_dir, f"segment_{seg_id:02d}_ts.json")
         seg["abs_start"] = cumulative
         seg["abs_end"] = cumulative + audio_dur
         cumulative += audio_dur
@@ -630,27 +683,49 @@ def main():
         print("✗ 拼接失败", file=sys.stderr)
         sys.exit(1)
 
-    # 5. 字幕
+    # 5. 字幕（v2：词级时间戳逐句对齐；异常才回退 v1 摘要策略）
     print("▶ 生成字幕...")
     srt_path = os.path.join(workdir, "subtitles.srt")
-    sub_segments = [
-        {
-            "id": i + 1,
-            "start_sec": seg["abs_start"],
-            "end_sec": seg["abs_end"],
-            "subtitle": seg.get("subtitle", ""),
-        }
-        for i, seg in enumerate(segments)
-    ]
-    with open(os.path.join(workdir, "sub_segments.json"), "w", encoding="utf-8") as f:
-        json.dump(sub_segments, f, ensure_ascii=False, indent=2)
+    manifest = [{
+        "oral_text": seg.get("oral_text", ""),
+        "abs_start": seg.get("abs_start", 0.0),
+        "audio_dur": seg.get("audio_dur", 3.0),
+        "timestamps": _read_timestamps(seg.get("ts_path")),
+    } for seg in segments]
+
+    aligned_ok = False
     try:
-        subprocess.run([PYTHON_EXE, SUB_SCRIPT, "--segments",
-                        os.path.join(workdir, "sub_segments.json"),
-                        "--output", srt_path], check=True, capture_output=True)
-    except subprocess.CalledProcessError as e:
-        print(f"  ⚠ 字幕生成失败: {e}", file=sys.stderr)
-        srt_path = None
+        from srt_aligner import build_srt_from_manifest
+        srt_text, srt_lines = build_srt_from_manifest(manifest)
+        if srt_lines:
+            with open(srt_path, "w", encoding="utf-8") as f:
+                f.write(srt_text)
+            n_words = sum(len(m["timestamps"]) for m in manifest)
+            print(f"  ✓ 逐句对齐 {len(srt_lines)} 条字幕（词级时间戳 {n_words} 个锚点）")
+            aligned_ok = True
+    except Exception as e:
+        print(f"  ⚠ 精确对齐失败，回退摘要策略: {e}", file=sys.stderr)
+
+    if not aligned_ok:
+        # 兜底：旧策略（一段一条摘要），仅在词级时间戳缺失时使用
+        sub_segments = [
+            {
+                "id": i + 1,
+                "start_sec": seg["abs_start"],
+                "end_sec": seg["abs_end"],
+                "subtitle": seg.get("oral_text", "") or seg.get("subtitle", ""),
+            }
+            for i, seg in enumerate(segments)
+        ]
+        with open(os.path.join(workdir, "sub_segments.json"), "w", encoding="utf-8") as f:
+            json.dump(sub_segments, f, ensure_ascii=False, indent=2)
+        try:
+            subprocess.run([PYTHON_EXE, SUB_SCRIPT, "--segments",
+                            os.path.join(workdir, "sub_segments.json"),
+                            "--output", srt_path], check=True, capture_output=True)
+        except subprocess.CalledProcessError as e:
+            print(f"  ⚠ 字幕生成失败: {e}", file=sys.stderr)
+            srt_path = None
 
     # 6. 叠加字幕
     if srt_path and os.path.exists(srt_path):
