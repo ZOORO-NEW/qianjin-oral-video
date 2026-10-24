@@ -21,13 +21,50 @@ import sys
 import tempfile
 
 # ── 路径配置 ──────────────────────────────────────────────────
+# 不写死任何本机绝对路径：外部程序一律「显式参数 > 环境变量 > PATH 查找 > 当前解释器」。
+# 换一台机器、换一个 python 环境，脚本照样能跑，也不会把本机目录结构带进产物。
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PYTHON_EXE = r"C:\Users\ZQJ\.workbuddy\binaries\python\envs\default\Scripts\python.exe"
 MANIM_SCRIPT = os.path.join(SKILL_DIR, "scripts", "manim_scenes.py")
 TTS_SCRIPT = os.path.join(SKILL_DIR, "scripts", "tts_generator.py")
 SUB_SCRIPT = os.path.join(SKILL_DIR, "scripts", "subtitle_generator.py")
-FFMPEG_EXE = r"C:\Users\ZQJ\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe"
-FFPROBE_EXE = FFMPEG_EXE.replace("ffmpeg.exe", "ffprobe.exe")
+
+# 环境变量（可选，等价于命令行参数）
+ENV_PYTHON = "QIANJIN_PYTHON"
+ENV_FFMPEG = "QIANJIN_FFMPEG"
+ENV_FFPROBE = "QIANJIN_FFPROBE"
+
+
+def _existing(*cands):
+    for c in cands:
+        if c and isinstance(c, str) and os.path.isfile(c):
+            return c
+    return None
+
+
+def resolve_python(explicit=None):
+    """运行 manim / tts / 字幕脚本的解释器。
+
+    默认用「正在执行本脚本的解释器」——manim 和 edge-tts 本来就装在这个环境里，
+    换机器时不需要改代码。要换环境就传 --python 或设 QIANJIN_PYTHON。
+    """
+    return (_existing(explicit, os.environ.get(ENV_PYTHON), sys.executable)
+            or shutil.which("python") or shutil.which("python3") or "python")
+
+
+def resolve_tool(name, explicit=None):
+    """解析 ffmpeg / ffprobe：显式参数 > 环境变量 > PATH。
+
+    找不到时返回裸名字，交给 subprocess 抛 FileNotFoundError，
+    并在报错里提示用 --ffmpeg / --ffprobe 指定。
+    """
+    env_key = ENV_FFMPEG if name == "ffmpeg" else ENV_FFPROBE
+    return _existing(explicit, os.environ.get(env_key)) or shutil.which(name) or name
+
+
+# 模块级默认值（被 import 时也能用）；main() 里会按命令行参数覆盖
+PYTHON_EXE = resolve_python()
+FFMPEG_EXE = resolve_tool("ffmpeg")
+FFPROBE_EXE = resolve_tool("ffprobe")
 
 # 平台→分辨率/声音
 PLATFORM_CONFIG = {
@@ -369,10 +406,11 @@ def render_manim(scene_type, params, out_path, resolution="1920,1080", fps=30, q
     scene_name = SCENE_MAP.get(scene_type, "TextRevealScene")
     media_dir = tempfile.mkdtemp(prefix="manim_")
 
+    # 完整继承宿主环境：不新增、不改写任何与系统权限有关的变量。
+    # Manim 的临时产物全部写在 --media_dir 指向的临时目录里，渲染结束后由本进程清理，
+    # 子进程不需要额外权限，也不会在技能目录之外留下文件。
     env = dict(os.environ)
     env["SCENE_PARAMS"] = json.dumps(params, ensure_ascii=False)
-    # 绕过 WorkBuddy 的 safe-delete 沙箱限制（Manim 需要删除临时缓存文件）
-    env["CODEBUDDY_SAFE_DELETE_SANDBOX"] = "0"
 
     qflag = {"l": "-ql", "m": "-qm", "h": "-qh", "k": "-qk"}[quality]
     # manim CLI: python -m manim FILE SCENE [OPTIONS]
@@ -396,11 +434,17 @@ def render_manim(scene_type, params, out_path, resolution="1920,1080", fps=30, q
             for f in files:
                 if f.endswith(".mp4") and scene_name in f:
                     shutil.move(os.path.join(root, f), out_path)
-                    shutil.rmtree(media_dir, ignore_errors=True)
                     return out_path
     except subprocess.TimeoutExpired:
         print(f"  ✗ Manim渲染超时: {scene_name}", file=sys.stderr)
         return None
+    except FileNotFoundError:
+        print(f"  ✗ 找不到解释器: {PYTHON_EXE}\n"
+              f"    请用 --python 指定装好 manim 的解释器", file=sys.stderr)
+        return None
+    finally:
+        # 成功、失败、超时都清理：临时目录只由本进程创建，也只由本进程删除
+        shutil.rmtree(media_dir, ignore_errors=True)
 
     print(f"  ✗ 未找到渲染输出: {scene_name}", file=sys.stderr)
     return None
@@ -578,7 +622,21 @@ def main():
     parser.add_argument("--workdir", default=None, help="工作目录(默认脚本同目录)")
     parser.add_argument("--portrait", default=None, help="人物肖像图片路径(嵌入到非标题段画面)")
     parser.add_argument("--illustrations", default=None, help="场景插图JSON文件路径({seg_id: image_path})")
+    parser.add_argument("--python", default=None,
+                        help="运行 manim/配音/字幕的解释器（默认当前解释器；也可设 QIANJIN_PYTHON）")
+    parser.add_argument("--ffmpeg", default=None,
+                        help="ffmpeg 可执行文件（默认从 PATH 查找；也可设 QIANJIN_FFMPEG）")
+    parser.add_argument("--ffprobe", default=None,
+                        help="ffprobe 可执行文件（默认从 PATH 查找；也可设 QIANJIN_FFPROBE）")
     args = parser.parse_args()
+
+    # 外部程序在这里统一解析一次，全流程复用；不依赖任何写死的本机路径
+    global PYTHON_EXE, FFMPEG_EXE, FFPROBE_EXE
+    PYTHON_EXE = resolve_python(args.python)
+    FFMPEG_EXE = resolve_tool("ffmpeg", args.ffmpeg)
+    FFPROBE_EXE = resolve_tool("ffprobe", args.ffprobe)
+    if not shutil.which("ffmpeg") and not args.ffmpeg:
+        print("  ! 未在 PATH 找到 ffmpeg，请安装后重试，或用 --ffmpeg 指定路径", file=sys.stderr)
 
     # 加载插图映射
     illustration_map = {}

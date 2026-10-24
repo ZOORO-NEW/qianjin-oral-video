@@ -33,9 +33,18 @@
 | ffmpeg | 8.1.1+ | 视频合成 | 系统已装（winget） |
 | Pillow | 12.2.0+ | 字幕帧生成 | `pip install pillow` |
 
-**关键路径：**
-- ffmpeg: `C:\Users\ZQJ\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin\ffmpeg.exe`
-- Python venv: `C:\Users\ZQJ\.workbuddy\binaries\python\envs\default\Scripts\python.exe`
+**关键路径（不写死，按顺序解析）：**
+
+脚本不保存任何本机绝对路径，外部程序按 `命令行参数 > 环境变量 > PATH > 当前解释器` 解析：
+
+| 程序 | 参数 | 环境变量 |
+|---|---|---|
+| python | `--python` | `QIANJIN_PYTHON` |
+| ffmpeg | `--ffmpeg` | `QIANJIN_FFMPEG` |
+| ffprobe | `--ffprobe` | `QIANJIN_FFPROBE` |
+
+默认行为：python 用 `sys.executable`，ffmpeg/ffprobe 用 `shutil.which()`。
+换机器或换虚拟环境只需传参数，不必改代码。
 
 ## 三、白板视觉风格规范
 

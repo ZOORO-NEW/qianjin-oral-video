@@ -1,5 +1,5 @@
 ---
-version: 1.1.1
+version: 1.1.2
 slug: qianjin-oral-video
 displayName: 口播视频脚本生成
 summary: "把长文案一键变成口播视频：出脚本、配音、词级字幕对齐，再用真·白板手绘或国风宣纸场景渲染成片。"
@@ -179,6 +179,35 @@ python scripts/generate_video.py \
   --output test.mp4 \
   --max-segments 2 --quality l
 ```
+
+### 外部依赖与本地环境（不写死路径）
+
+技能只用三个外部程序：**python**（跑 manim / edge-tts / 字幕对齐的解释器）、**ffmpeg**、**ffprobe**。
+脚本里没有任何本机绝对路径，解析顺序统一为：
+
+```
+命令行参数  >  环境变量  >  PATH 查找  >  当前解释器
+```
+
+| 程序 | 命令行参数 | 环境变量 | 缺省行为 |
+|---|---|---|---|
+| python | `--python` | `QIANJIN_PYTHON` | 用正在执行本脚本的 `sys.executable` |
+| ffmpeg | `--ffmpeg` | `QIANJIN_FFMPEG` | `shutil.which("ffmpeg")` |
+| ffprobe | `--ffprobe` | `QIANJIN_FFPROBE` | `shutil.which("ffprobe")` |
+
+```bash
+# 换一台机器 / 用另一个 python 环境时，显式指定即可
+python scripts/generate_video.py --script 口播脚本.md --output 成片.mp4 \
+  --python /path/to/venv/bin/python \
+  --ffmpeg /path/to/ffmpeg
+```
+
+**权限与临时文件（明示，不做静默处理）**：
+
+- 本技能**不修改宿主的任何权限 / 安全策略**，也不向子进程注入相关环境变量；子进程完整继承当前环境。
+- Manim 的中间产物全部写在系统临时目录下的 `manim_*` 子目录（`--media_dir`），
+  **由本脚本在渲染结束后删除**（成功、失败、超时都清理），不在技能目录里留缓存。
+- 找不到 ffmpeg 时脚本会在 stderr 明确提示，不会静默降级或去猜路径。
 
 ### 场景类型（从视觉指令自动推断）
 
